@@ -659,3 +659,15 @@ procdump(void)
     printf("\n");
   }
 }
+
+// Get process count where state is not unused
+uint64
+free_proc_count(void) {
+  uint64 cnt = 0;
+
+  for (struct proc* p = proc; p < &proc[NPROC]; p ++) {
+    cnt += p->state != UNUSED;
+  }
+
+  return cnt;
+}

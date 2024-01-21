@@ -7,6 +7,8 @@
 #include "spinlock.h"
 #include "proc.h"
 
+#include "sysinfo.h"
+
 uint64
 sys_exit(void)
 {
@@ -101,5 +103,25 @@ uint64 sys_trace(void) {
   if (argint(0, &trace_mask) < 0)
     return -1;
   myproc()->trace_mask |= trace_mask;
+  return 0;
+}
+
+extern uint64 free_mem_byte();
+extern uint64 free_proc_count();
+
+uint64
+sys_sysinfo(void) {
+  uint64 dst;
+  if (argaddr(0, &dst) < 0)
+    return -1;
+
+  struct sysinfo info = {
+    .freemem = free_mem_byte(),
+    .nproc = free_proc_count()
+  };
+  
+  if (copyout(myproc()->pagetable, dst, (char*)&info, sizeof(info)) < 0)
+    return -1;
+
   return 0;
 }
