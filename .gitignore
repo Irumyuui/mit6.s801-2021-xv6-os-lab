@@ -5,7 +5,6 @@ _*
 *.asm
 *.sym
 *.img
-*-handin.tar.gz
 vectors.S
 bootblock
 entryother
@@ -17,7 +16,9 @@ kernel/kernel
 user/usys.S
 .gdbinit
 myapi.key
+*-handin.tar.gz
 xv6.out*
 .vagrant/
 submissions/
-.DS_Store
+ph
+barrier
