@@ -14,15 +14,24 @@ int main() {
 
     // == 0 := ch p
     if (fork() == 0) {
+        close(pipe_p_to_c[0]);
+        close(pipe_c_to_p[1]);
+        
         read(pipe_p_to_c[0], buf, 1);
         printf("%d: received ping\n", getpid());   
         write(pipe_c_to_p[1], msg, 1);
+        
         close(pipe_p_to_c[1]);
         close(pipe_c_to_p[0]);
     } else {
+        close(pipe_c_to_p[0]);
+        close(pipe_p_to_c[1]);
+
         write(pipe_p_to_c[1], msg, 1);
+        wait(0);
         read(pipe_c_to_p[0], buf, 1);
         printf("%d: received pong\n", getpid());
+        
         close(pipe_c_to_p[1]);
         close(pipe_p_to_c[0]);
     }
