@@ -6,6 +6,9 @@
 #include "defs.h"
 #include "fs.h"
 
+#include "spinlock.h"
+#include "proc.h"
+
 /*
  * the kernel's page table.
  */
@@ -132,7 +135,12 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  // pte = walk(kernel_pagetable, va, 0);
+  pte = walk(myproc()->kernel_pagetable, va, 0);
+
+  // struct proc* cur_proc = myproc();
+  
+
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)

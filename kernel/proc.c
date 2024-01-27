@@ -19,6 +19,8 @@ extern void forkret(void);
 static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
+extern char etext[];  // kernel.ld sets this to end of kernel code.
+
 extern char trampoline[]; // trampoline.S
 
 // initialize the proc table at boot time.
@@ -31,15 +33,17 @@ procinit(void)
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
 
+      // Move to allocproc
+      // 
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+      // char *pa = kalloc();
+      // if(pa == 0)
+      //   panic("kalloc");
+      // uint64 va = KSTACK((int) (p - proc));
+      // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      // p->kstack = va;
   }
   kvminithart();
 }
@@ -85,6 +89,41 @@ allocpid() {
   return pid;
 }
 
+void uvmmap(pagetable_t upagetable, uint64 va, uint64 pa, uint64 sz, int perm) {
+  if (mappages(upagetable, va, sz, pa, perm) != 0)
+    panic("uvmmap");
+}
+
+pagetable_t proc_kernel_pagetable_init() {
+  pagetable_t proc_kernel_pagetable = uvmcreate();
+  if (proc_kernel_pagetable == 0) 
+    return 0;
+
+  // uart registers
+  uvmmap(proc_kernel_pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  uvmmap(proc_kernel_pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // CLINT
+  uvmmap(proc_kernel_pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  uvmmap(proc_kernel_pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  uvmmap(proc_kernel_pagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  uvmmap(proc_kernel_pagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  uvmmap(proc_kernel_pagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+  return proc_kernel_pagetable;
+}
+
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -121,6 +160,22 @@ found:
     return 0;
   }
 
+  // init empty kernel page table per user process.
+  p->kernel_pagetable = proc_kernel_pagetable_init();
+  if (p->kernel_pagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  // allocate a page for the process's kernel stack.
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));
+  uvmmap(p->kernel_pagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -128,6 +183,23 @@ found:
   p->context.sp = p->kstack + PGSIZE;
 
   return p;
+}
+
+void freeproc_kernel_pagetable(pagetable_t kernel_pagetable) {
+  for (int i = 0; i < 512; i ++) {
+    pte_t pte = kernel_pagetable[i];
+
+    // if valib
+    if (pte & PTE_V) {
+      // if contains
+      if ((pte & (PTE_W | PTE_R | PTE_X)) == 0) {
+        freeproc_kernel_pagetable((pagetable_t)PTE2PA(pte));
+      }
+      kernel_pagetable[i] = 0;
+    }
+  }
+
+  kfree((void *)kernel_pagetable);
 }
 
 // free a proc structure and the data hanging from it,
@@ -141,6 +213,14 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  
+  // un map
+  uvmunmap(p->kernel_pagetable, p->kstack, 1, 1);
+  freeproc_kernel_pagetable(p->kernel_pagetable);
+
+  // call free proc's kernel pagetable
+  p->kernel_pagetable = 0;
+  p->kstack = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -473,10 +553,16 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
-        swtch(&c->context, &p->context);
 
+        // switch kernel page table from current process.
+        w_satp(MAKE_SATP(p->kernel_pagetable));
+        sfence_vma();
+
+        swtch(&c->context, &p->context);
+        
         // Process is done running for now.
         // It should have changed its p->state before coming back.
+        kvminithart();
         c->proc = 0;
 
         found = 1;
