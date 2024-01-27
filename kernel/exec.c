@@ -75,9 +75,6 @@ exec(char *path, char **argv)
   sp = sz;
   stackbase = sp - PGSIZE;
 
-  if (proc_pagetable_copy(pagetable, p->kernel_pagetable, 0, sz) < 0)
-    goto bad;
-
   // Push argument strings, prepare rest of stack in ustack.
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
@@ -118,6 +115,9 @@ exec(char *path, char **argv)
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
+
+  if (proc_pagetable_copy(p->pagetable, p->kernel_pagetable, 0, sz) < 0)
+    goto bad;
 
   if (p->pid == 1)
     vmprint(p->pagetable);
