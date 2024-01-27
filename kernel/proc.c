@@ -338,6 +338,9 @@ growproc(int n)
       return -1;
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    if (PGROUNDUP(p->sz) != PGROUNDUP(sz)) {
+      uvmunmap(p->kernel_pagetable, PGROUNDUP(sz), (PGROUNDUP(p->sz) - PGROUNDUP(sz)) / PGSIZE, 0);
+    }
   }
   p->sz = sz;
   return 0;
