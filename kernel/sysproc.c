@@ -98,3 +98,29 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64 sys_sigalarm(void) {
+  int ticks;
+  uint64 fn_addr;
+
+  if (argint(0, &ticks) < 0 || argaddr(1, &fn_addr) < 0)
+    return -1;
+
+  struct proc* cur_proc = myproc();
+  cur_proc->alarm_ticks_period = ticks;
+  cur_proc->alarm_handler_fn = (void(*)())fn_addr;
+
+  return 0;
+}
+
+uint64 sys_sigreturn(void) {
+  struct proc* cur_proc = myproc();
+
+  if (cur_proc->is_alarmed) {
+    cur_proc->is_alarmed = 0;
+    *cur_proc->trapframe = *cur_proc->alarm_trapframe;
+    cur_proc->alarm_pass_ticks = 0;
+  }
+  
+  return 0;
+}
