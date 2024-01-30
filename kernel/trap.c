@@ -88,9 +88,9 @@ usertrap(void)
       // jump to handler_fn
       if (!p->is_alarmed && p->alarm_pass_ticks == p->alarm_ticks_period) {
         p->is_alarmed = 1;
+        p->alarm_pass_ticks = 0;
         *p->alarm_trapframe = *p->trapframe;
         p->trapframe->epc = (uint64)p->alarm_handler_fn;
-        // p->alarm_pass_ticks = 0;
       }
     }
     yield();
