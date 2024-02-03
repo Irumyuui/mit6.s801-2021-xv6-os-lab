@@ -454,7 +454,7 @@ int lazy_alloc_page(struct proc *p, uint64 vaddr) {
   // printf("lazy_alloc_page: va %p\n", vaddr);
 
   // segmentation fault
-  if (p->trapframe->sp > vaddr || p->sz < vaddr) {
+  if (p->trapframe->sp > vaddr || p->sz <= vaddr) {
     // printf("lazy_alloc_page: va out of range\n");
     return -1;
   }
