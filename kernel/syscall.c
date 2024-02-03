@@ -67,7 +67,15 @@ argint(int n, int *ip)
 int
 argaddr(int n, uint64 *ip)
 {
-  *ip = argraw(n);
+  uint64 addr = argraw(n);
+  
+  if (walkaddr(myproc()->pagetable, addr) == 0 
+  && lazy_alloc_page(myproc(), addr) != 0) {
+    // printf("argaddr: va %p faild\n", addr);
+    return -1;
+  }
+
+  *ip = addr;
   return 0;
 }
 
@@ -136,6 +144,9 @@ syscall(void)
   struct proc *p = myproc();
 
   num = p->trapframe->a7;
+
+  // printf("system call num %d\n", num);
+  
   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     p->trapframe->a0 = syscalls[num]();
   } else {

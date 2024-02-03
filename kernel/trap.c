@@ -36,6 +36,8 @@ trapinithart(void)
 void
 usertrap(void)
 {
+  // printf("usertrap: pid %d pkill %d\n", myproc()->pid, myproc()->killed);
+
   int which_dev = 0;
 
   if((r_sstatus() & SSTATUS_SPP) != 0)
@@ -52,6 +54,7 @@ usertrap(void)
   
   if(r_scause() == 8){
     // system call
+    // printf("usertrap(): system call\n");
 
     if(p->killed)
       exit(-1);
@@ -68,25 +71,34 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else if (r_scause() == 13 || r_scause() == 15) {
+    // printf("usertrap: page fault scause %d\n", r_scause());
+    
     // 13 load page fault
     // 15 store/AMO page fault
 
-    uint64 va = PGROUNDDOWN(r_stval());
-    uint64 pa = (uint64)kalloc();
-    if (pa == 0) {
+    if (lazy_alloc_page(myproc(), r_stval()) != 0) {
+      // printf("usertrap: lazy_alloc_page\n");
       p->killed = 1;
-    } else {
-      memset((void *)pa, 0, PGSIZE);
-      if (mappages(p->pagetable, va, PGSIZE, pa, PTE_W | PTE_R | PTE_U) != 0) {
-        kfree((void *)pa);
-        p->killed = 1;
-      }
     }
+
+    // uint64 va = PGROUNDDOWN(r_stval());
+    // uint64 pa = (uint64)kalloc();
+    // if (pa == 0) {
+    //   p->killed = 1;
+    // } else {
+    //   memset((void *)pa, 0, PGSIZE);
+    //   if (mappages(p->pagetable, va, PGSIZE, pa, PTE_W | PTE_R | PTE_U) != 0) {
+    //     kfree((void *)pa);
+    //     p->killed = 1;
+    //   }
+    // }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
+
+  // printf("usertrap: p->killed %d\n", p->killed);
 
   if(p->killed)
     exit(-1);
