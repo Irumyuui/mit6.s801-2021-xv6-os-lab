@@ -23,6 +23,31 @@ struct {
   struct run *freelist;
 } kmem;
 
+struct {
+  struct spinlock lock;
+  uint64 ref_count;
+} cow_page_ref_info[PHYSTOP / PGSIZE];
+
+// int cow_page_ref_count[PHYSTOP / PGSIZE];
+
+uint64 get_cow_page_index(void* pa) {
+  return ((uint64)pa - (uint64)end) / PGSIZE;
+}
+
+uint64 adjust_cow_page_ref_count(uint64 pa, int dx) {
+  int idx = get_cow_page_index((void*)pa);
+  
+  // printf("adjust_cow_page_ref_count: pa %p dx %d idx %d\n", pa, dx, idx);
+
+  uint64 cnt;
+  acquire(&cow_page_ref_info[idx].lock);
+  cow_page_ref_info[idx].ref_count += dx;
+  cnt = cow_page_ref_info[idx].ref_count;
+  release(&cow_page_ref_info[idx].lock);
+
+  return cnt;
+}
+
 void
 kinit()
 {
@@ -35,8 +60,11 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE) {
+    initlock(&cow_page_ref_info[get_cow_page_index(p)].lock, "cow_page_ref_count lock");
+    cow_page_ref_info[get_cow_page_index(p)].ref_count = 1;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -52,13 +80,24 @@ kfree(void *pa)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
+  uint64 cnt = adjust_cow_page_ref_count((uint64)pa, -1);
+  if (cnt > 0) {
+    return;
+  }
+
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
 
+  // if (cnt < 0) {
+  //   panic("kfree: cnt < 0\n");
+  // }
+
   acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
+  if (cnt == 0) {
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+  }
   release(&kmem.lock);
 }
 
@@ -72,11 +111,17 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r) {
     kmem.freelist = r->next;
+    // cow_page_ref_count[get_cow_page_index(r)] = 1;
+  }
   release(&kmem.lock);
 
-  if(r)
+  if(r) {
     memset((char*)r, 5, PGSIZE); // fill with junk
+    if (adjust_cow_page_ref_count((uint64)r, 1) != 1) {
+      panic("kalloc: ref cnt is not 1\n");
+    }
+  }
   return (void*)r;
 }
