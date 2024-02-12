@@ -1,9 +1,3 @@
 {
-    "clangd.fallbackFlags": [
-        "-xc",
-        "-std=c11",
-        "-I${workspaceFolder}",
-        "-Wall",
-        "-Wextra"
-    ]
+    "makefile.compileCommandsPath": "compile_commands.json"
 }
