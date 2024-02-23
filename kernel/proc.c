@@ -6,6 +6,11 @@
 #include "proc.h"
 #include "defs.h"
 
+#include "fcntl.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -133,6 +138,10 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+
+  for (int i = 0; i < VMA_COUNT; i ++) {
+    p->vmas[i].is_used = 0;
+  }
 
   return p;
 }
@@ -280,6 +289,14 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  for (int i = 0; i < VMA_COUNT; i ++) {
+    np->vmas[i] = p->vmas[i];
+    if (np->vmas[i].is_used) {
+      filedup(np->vmas[i].file);
+    }
+  }
+
   np->sz = p->sz;
 
   np->parent = p;
@@ -350,6 +367,18 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  for (int i = 0; i < VMA_COUNT; i ++) {
+    struct virtual_memory_area *vma = &p->vmas[i];
+    if (vma->is_used) {
+      if (vma->flags & MAP_SHARED && filewrite(vma->file, vma->address, vma->length) < 0) {
+        // printf("exit: wtf on this file");
+      }
+      fileclose(vma->file);
+      uvmunmap(p->pagetable, vma->address, vma->length / PGSIZE, 1);
+      vma->is_used = 0;
     }
   }
 
@@ -700,4 +729,48 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int mmap_alloc_page(struct proc *p, uint64 va) {
+  struct virtual_memory_area *vma = 0;
+  for (int i = 0; i < VMA_COUNT; i ++) {
+    if (p->vmas[i].is_used
+    && p->vmas[i].address <= va && va < p->vmas[i].address + p->vmas[i].length) {
+      vma = &p->vmas[i];
+      break;
+    }
+  }
+  if (vma == 0) {
+    return -1;
+  }
+
+  uint64 pa = (uint64)kalloc();
+  va = PGROUNDDOWN(va);
+  if (pa == 0) {
+    return -1;
+  }
+  memset((void*)pa, 0, PGSIZE);
+
+  ilock(vma->file->ip);
+  if (readi(vma->file->ip, 0, pa, va - vma->address + vma->offset, PGSIZE) < 0) {
+    iunlock(vma->file->ip);
+    kfree((void*)pa);
+    return -1;
+  }
+  iunlock(vma->file->ip);
+
+  int pte_flags = PTE_U;
+  if (vma->prot & PROT_READ)
+    pte_flags |= PTE_R;
+  if (vma->prot & PROT_WRITE)
+    pte_flags |= PTE_W;
+  if (vma->prot & PROT_EXEC)
+    pte_flags |= PTE_X;
+
+  if (mappages(p->pagetable, va, PGSIZE, pa, pte_flags) < 0) {
+    kfree((void *)pa);
+    return -1;
+  }
+
+  return 0;
 }

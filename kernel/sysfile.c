@@ -484,3 +484,112 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 sys_mmap(void) {
+  uint64 addr;
+  int len;
+  int prot;
+  int flags;
+  int fd;
+  struct file *file;
+  int offset;
+
+  if (argaddr(0, &addr) < 0
+  || argint(1, &len) < 0
+  || argint(2, &prot) < 0
+  || argint(3, &flags)
+  || argfd(4, &fd, &file) < 0
+  || argint(5, &offset) < 0) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+  struct virtual_memory_area *vma = 0;
+  for (int i = 0; i < VMA_COUNT; i ++) {
+    if (!p->vmas[i].is_used) {
+      vma = &p->vmas[i];
+      break;
+    }
+  }
+  if (vma == 0) {
+    return -1;
+  }
+
+  // if (file->readable && !(prot & PROT_READ))
+  //   return -1;
+  // if (file->writable && !(prot & PROT_WRITE))
+  //   return -1;
+  // if (!file->writable && (flags & MAP_SHARED))
+  //   return -1;
+
+
+  if (!file->readable && (prot & PROT_READ))
+    return -1;
+  if (!file->writable && (prot & PROT_WRITE) && (flags & MAP_SHARED))
+    return -1;
+  // if (!file->writable && (flags & MAP_SHARED))
+  //   return -1;
+
+  len = PGROUNDUP(len);
+  if (p->sz + len >= MAXVA) 
+    return -1;
+
+  vma->is_used = 1;
+  vma->address = p->sz;
+  vma->length = len;
+  vma->prot = prot;
+  vma->flags = flags;
+  vma->fd = fd;
+  vma->file = file;
+  vma->offset = offset;
+  
+  filedup(file);
+  p->sz += len;
+
+  return vma->address;
+}
+
+uint64 sys_munmap(void) {
+  uint64 addr;
+  int len;
+
+  if (argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+  struct virtual_memory_area *vma = 0;
+  for (int i = 0; i < VMA_COUNT; i ++) {
+    if (p->vmas[i].is_used && p->vmas[i].address <= addr && addr < p->vmas[i].address + p->vmas[i].length) {
+      vma = &p->vmas[i];
+      break;
+    }
+  }
+  if (vma == 0) {
+    return -1;
+  }
+
+  addr = PGROUNDDOWN(addr);
+  len = PGROUNDUP(len);
+  if (vma->flags & MAP_SHARED && filewrite(vma->file, addr, len) < 0) {
+    // printf("munmap: wtf on this file");
+  }
+
+  uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+
+  if (addr == vma->address) {
+    vma->address += len;
+    vma->length -= len;
+  } else if (addr + len == vma->address + len) {
+    vma->length -= len;
+  } else {
+    panic("munmap: wtf");
+  }
+
+  if (vma->length == 0) {
+    fileclose(vma->file);
+    vma->is_used = 0;
+  }
+
+  return 0;
+}
